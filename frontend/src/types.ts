@@ -1,4 +1,6 @@
 export type UserRole = '0' | '1';
+export type AuthMode = 'login' | 'register';
+export type AppView = 'catalog' | 'auth' | 'profile' | 'admin';
 
 export interface User {
   id: number;
@@ -23,6 +25,14 @@ export interface Product {
   price: number;
   quantity: number;
   image: string | null;
+  categories: Category[];
+  isAdultOnly: boolean;
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  swMayoriaEdad: '0' | '1';
 }
 
 export interface PurchaseItem {
@@ -64,6 +74,12 @@ export interface ProductInput {
   price: number;
   quantity: number;
   image?: string;
+  categoryIds?: number[];
+}
+
+export interface AdminUserInput {
+  name?: string;
+  role?: UserRole;
 }
 
 export interface PurchaseInput {
@@ -86,9 +102,14 @@ export interface Notice {
 export interface AppState {
   session: Session | null;
   products: Product[];
+  categories: Category[];
   myProducts: Product[];
   purchases: Purchase[];
-  authMode: 'login' | 'register';
+  users: User[];
+  authMode: AuthMode;
+  currentView: AppView;
+  catalogSearch: string;
+  selectedCategoryId: number | null;
   productEditingId: number | null;
   busy: boolean;
   notice: Notice | null;

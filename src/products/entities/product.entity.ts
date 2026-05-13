@@ -2,12 +2,15 @@ import {
   Column,
   Entity,
   JoinColumn,
+  JoinTable,
   ManyToOne,
+  ManyToMany,
   OneToMany,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { PurchaseDetail } from '../../purchases/entities/purchase-detail.entity';
+import { Category } from './category.entity';
 
 @Entity({ name: 'productos' })
 export class Product {
@@ -47,4 +50,12 @@ export class Product {
 
   @OneToMany(() => PurchaseDetail, (detail) => detail.product)
   purchaseDetails!: PurchaseDetail[];
+
+  @ManyToMany(() => Category, (category) => category.products)
+  @JoinTable({
+    name: 'producto_categorias',
+    joinColumn: { name: 'producto_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'categoria_id', referencedColumnName: 'id' },
+  })
+  categories!: Category[];
 }

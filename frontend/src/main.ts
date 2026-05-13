@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { SESSION_STORAGE_KEY } from './config.js';
 import type {
   AppState,
+  AppView,
   LoginInput,
   ProductInput,
   RegisterInput,
@@ -21,9 +22,14 @@ const appRoot = root;
 const state: AppState = {
   session: loadSession(),
   products: [],
+  categories: [],
   myProducts: [],
   purchases: [],
+  users: [],
   authMode: 'login',
+  currentView: 'catalog',
+  catalogSearch: '',
+  selectedCategoryId: null,
   productEditingId: null,
   busy: false,
   notice: null,
@@ -72,27 +78,49 @@ function render(): void {
   appRoot.innerHTML = renderApp(state);
 }
 
+function getCatalogFilters() {
+  return {
+    search: state.catalogSearch,
+    categoryId: state.selectedCategoryId,
+  };
+}
+
 async function refreshPublicData(): Promise<void> {
-  state.products = await api.getProducts();
+  const [products, categories] = await Promise.all([
+    api.getProducts(getCatalogFilters()),
+    api.getCategories(),
+  ]);
+
+  state.products = products;
+  state.categories = categories;
 }
 
 async function refreshPrivateData(): Promise<void> {
   if (!state.session) {
     state.myProducts = [];
     state.purchases = [];
+    state.users = [];
     return;
   }
 
+  const session = state.session;
   const [user, myProducts, purchases] = await Promise.all([
-    api.me(state.session.token),
-    api.getMyProducts(state.session.token),
-    api.getMyPurchases(state.session.token),
+    api.me(session.token),
+    api.getMyProducts(session.token),
+    api.getMyPurchases(session.token),
   ]);
 
-  state.session.user = user;
+  session.user = user;
   state.myProducts = myProducts;
   state.purchases = purchases;
-  saveSession(state.session);
+
+  if (session.user.role === '1') {
+    state.users = await api.getUsers(session.token);
+  } else {
+    state.users = [];
+  }
+
+  saveSession(session);
 }
 
 async function bootstrap(): Promise<void> {
@@ -141,6 +169,28 @@ function requireSession(): Session {
   return state.session;
 }
 
+function readCategoryIds(formData: FormData): number[] {
+  return [...new Set(formData.getAll('categoryIds').map((value) => Number(value)))].filter(
+    (id) => Number.isInteger(id) && id > 0,
+  );
+}
+
+function goToView(view: AppView): void {
+  if (view === 'admin' && state.session?.user.role !== '1') {
+    setNotice('No tienes permisos de administrador.', 'error');
+    return;
+  }
+
+  if ((view === 'profile' || view === 'admin') && !state.session) {
+    state.currentView = 'auth';
+    render();
+    return;
+  }
+
+  state.currentView = view;
+  render();
+}
+
 root.addEventListener('click', async (event) => {
   const target = event.target;
 
@@ -168,11 +218,23 @@ root.addEventListener('click', async (event) => {
     return;
   }
 
+  if (action === 'go-view') {
+    const view = actionElement.dataset.view as AppView | undefined;
+
+    if (view) {
+      goToView(view);
+    }
+
+    return;
+  }
+
   if (action === 'logout') {
     state.session = null;
+    state.currentView = 'catalog';
     state.productEditingId = null;
     state.myProducts = [];
     state.purchases = [];
+    state.users = [];
     saveSession(null);
     render();
     setNotice('Sesión cerrada.', 'info');
@@ -185,15 +247,34 @@ root.addEventListener('click', async (event) => {
     return;
   }
 
+  if (action === 'reset-catalog-filters') {
+    await withBusy(async () => {
+      state.catalogSearch = '';
+      state.selectedCategoryId = null;
+      await refreshPublicData();
+      setNotice('Filtros del catálogo limpiados.', 'info');
+    });
+    return;
+  }
+
   const productId = Number(actionElement.dataset.productId ?? '0');
 
   if (action === 'edit-product' && productId > 0) {
     state.productEditingId = productId;
+    state.currentView = 'profile';
     render();
     return;
   }
 
   if (action === 'delete-product' && productId > 0) {
+    const confirmed = confirm(
+      '¿Estás seguro de que deseas eliminar este producto? Esta acción no se puede deshacer.',
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     await withBusy(async () => {
       try {
         const session = requireSession();
@@ -203,6 +284,35 @@ root.addEventListener('click', async (event) => {
         await refreshPublicData();
         await refreshPrivateData();
         setNotice('Producto eliminado correctamente.', 'success');
+      } catch (error) {
+        setNotice(getErrorMessage(error), 'error');
+      }
+    });
+    return;
+  }
+
+  const categoryId = Number(actionElement.dataset.categoryId ?? '0');
+
+  if (action === 'delete-category' && categoryId > 0) {
+    const confirmed = confirm(
+      '¿Estás seguro de que deseas eliminar esta categoría? Los productos conservarán su información, pero perderán esta clasificación.',
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    await withBusy(async () => {
+      try {
+        const session = requireSession();
+        await api.deleteCategory(categoryId, session.token);
+        await refreshPublicData();
+
+        if (state.session) {
+          await refreshPrivateData();
+        }
+
+        setNotice('Categoría eliminada correctamente.', 'success');
       } catch (error) {
         setNotice(getErrorMessage(error), 'error');
       }
@@ -220,7 +330,17 @@ root.addEventListener('submit', async (event) => {
   }
 
   const formName = form.dataset.form;
-  const values = formDataToObject(new FormData(form));
+  const formData = new FormData(form);
+  const values = formDataToObject(formData);
+
+  if (formName === 'catalog-search') {
+    await withBusy(async () => {
+      state.catalogSearch = values.search ?? '';
+      state.selectedCategoryId = values.categoryId ? Number(values.categoryId) : null;
+      await refreshPublicData();
+    });
+    return;
+  }
 
   if (formName === 'login') {
     await withBusy(async () => {
@@ -233,6 +353,7 @@ root.addEventListener('submit', async (event) => {
         const auth = await api.login(payload);
         state.session = { token: auth.accessToken, user: auth.user };
         saveSession(state.session);
+        state.currentView = 'catalog';
         await refreshPublicData();
         await refreshPrivateData();
         setNotice('Sesión iniciada correctamente.', 'success');
@@ -256,6 +377,7 @@ root.addEventListener('submit', async (event) => {
         const auth = await api.register(payload);
         state.session = { token: auth.accessToken, user: auth.user };
         saveSession(state.session);
+        state.currentView = 'catalog';
         await refreshPublicData();
         await refreshPrivateData();
         setNotice('Cuenta creada correctamente.', 'success');
@@ -276,6 +398,7 @@ root.addEventListener('submit', async (event) => {
           price: Number(values.price),
           quantity: Number(values.quantity),
           image: values.image || undefined,
+          categoryIds: readCategoryIds(formData),
         };
 
         if (state.productEditingId) {
@@ -314,6 +437,108 @@ root.addEventListener('submit', async (event) => {
         await refreshPublicData();
         await refreshPrivateData();
         setNotice('Compra registrada correctamente.', 'success');
+      } catch (error) {
+        setNotice(getErrorMessage(error), 'error');
+      }
+    });
+    return;
+  }
+
+  if (formName === 'admin-user') {
+    await withBusy(async () => {
+      try {
+        const session = requireSession();
+        const userId = Number(form.dataset.userId ?? '0');
+
+        const payload: { name?: string; role?: '0' | '1' } = {
+          name: values.name,
+        };
+
+        if (values.role === '0' || values.role === '1') {
+          payload.role = values.role;
+        }
+
+        await api.updateUserByAdmin(
+          userId,
+          payload,
+          session.token,
+        );
+
+        await refreshPrivateData();
+        setNotice('Usuario actualizado.', 'success');
+      } catch (error) {
+        setNotice(getErrorMessage(error), 'error');
+      }
+    });
+    return;
+  }
+
+  if (formName === 'admin-product') {
+    await withBusy(async () => {
+      try {
+        const session = requireSession();
+        const productId = Number(form.dataset.productId ?? '0');
+
+        await api.updateProduct(
+          productId,
+          {
+            name: values.name,
+            price: Number(values.price),
+            quantity: Number(values.quantity),
+          },
+          session.token,
+        );
+
+        await refreshPublicData();
+        await refreshPrivateData();
+        setNotice('Producto actualizado desde panel admin.', 'success');
+      } catch (error) {
+        setNotice(getErrorMessage(error), 'error');
+      }
+    });
+    return;
+  }
+
+  if (formName === 'admin-category') {
+    await withBusy(async () => {
+      try {
+        const session = requireSession();
+        const categoryId = Number(form.dataset.categoryId ?? '0');
+
+        await api.updateCategory(
+          categoryId,
+          {
+            name: values.name,
+            swMayoriaEdad: values.swMayoriaEdad as '0' | '1',
+          },
+          session.token,
+        );
+
+        await refreshPublicData();
+        setNotice('Categoría actualizada.', 'success');
+      } catch (error) {
+        setNotice(getErrorMessage(error), 'error');
+      }
+    });
+    return;
+  }
+
+  if (formName === 'admin-category-create') {
+    await withBusy(async () => {
+      try {
+        const session = requireSession();
+
+        await api.createCategory(
+          {
+            name: values.name,
+            swMayoriaEdad: values.swMayoriaEdad as '0' | '1',
+          },
+          session.token,
+        );
+
+        form.reset();
+        await refreshPublicData();
+        setNotice('Categoría creada correctamente.', 'success');
       } catch (error) {
         setNotice(getErrorMessage(error), 'error');
       }

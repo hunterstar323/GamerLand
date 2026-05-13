@@ -5,4 +5,5 @@ export interface AuthUser {
   email: string;
   role: UserRole;
   name: string;
+  birthDate: string;
 }

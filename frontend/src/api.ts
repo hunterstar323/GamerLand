@@ -1,6 +1,8 @@
 import { API_URL } from './config.js';
 import type {
+  AdminUserInput,
   AuthResponse,
+  Category,
   LoginInput,
   Product,
   ProductInput,
@@ -15,6 +17,26 @@ type RequestOptions = {
   body?: unknown;
   token?: string;
 };
+
+type ProductQuery = {
+  search?: string;
+  categoryId?: number | null;
+};
+
+function buildProductQuery(params: ProductQuery = {}): string {
+  const query = new URLSearchParams();
+
+  if (params.search?.trim()) {
+    query.set('search', params.search.trim());
+  }
+
+  if (params.categoryId) {
+    query.set('categoryId', String(params.categoryId));
+  }
+
+  const serialized = query.toString();
+  return serialized ? `?${serialized}` : '';
+}
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
@@ -57,11 +79,39 @@ export const api = {
   me(token: string) {
     return request<User>('/auth/me', { token });
   },
-  getProducts() {
-    return request<Product[]>('/products');
+  getProducts(params: ProductQuery = {}) {
+    return request<Product[]>(`/products${buildProductQuery(params)}`);
   },
-  getMyProducts(token: string) {
-    return request<Product[]>('/products/me', { token });
+  getMyProducts(token: string, params: ProductQuery = {}) {
+    return request<Product[]>(`/products/me${buildProductQuery(params)}`, {
+      token,
+    });
+  },
+  getCategories() {
+    return request<Category[]>('/products/categories');
+  },
+  createCategory(
+    payload: { name: string; swMayoriaEdad: '0' | '1' },
+    token: string,
+  ) {
+    return request<Category>('/products/categories', {
+      method: 'POST',
+      body: payload,
+      token,
+    });
+  },
+  updateCategory(id: number, payload: Partial<Category>, token: string) {
+    return request<Category>(`/products/categories/${id}`, {
+      method: 'PUT',
+      body: payload,
+      token,
+    });
+  },
+  deleteCategory(id: number, token: string) {
+    return request<{ message: string }>(`/products/categories/${id}`, {
+      method: 'DELETE',
+      token,
+    });
   },
   createProduct(payload: ProductInput, token: string) {
     return request<Product>('/products', {
@@ -92,5 +142,15 @@ export const api = {
   },
   getMyPurchases(token: string) {
     return request<Purchase[]>('/purchases/me', { token });
+  },
+  getUsers(token: string) {
+    return request<User[]>('/users', { token });
+  },
+  updateUserByAdmin(id: number, payload: AdminUserInput, token: string) {
+    return request<User>(`/users/${id}`, {
+      method: 'PUT',
+      body: payload,
+      token,
+    });
   },
 };

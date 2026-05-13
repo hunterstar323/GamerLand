@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsArray,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -36,4 +37,11 @@ export class CreateProductDto {
   @IsOptional()
   @IsUrl()
   image?: string;
+
+  @ApiPropertyOptional({ type: [Number], example: [1, 3] })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  categoryIds?: number[];
 }

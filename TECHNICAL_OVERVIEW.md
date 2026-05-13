@@ -327,3 +327,98 @@ Actualmente cubren el controlador principal. Se puede extender con tests por mó
 | ORM | Object-Relational Mapper. Permite trabajar con la BD usando objetos TS en vez de SQL puro |
 | Pooler | Proxy de conexiones que reutiliza conexiones a la BD para mayor eficiencia |
 | SPA | Single Page Application. La app se carga una vez y navega sin recargar la página |
+
+
+┌─────────────────────────────────────────────────────────────────┐
+│                         GAMER LAND FLOW                         │
+└─────────────────────────────────────────────────────────────────┘
+
+1️⃣ AUTENTICACIÓN (Auth Flow)
+   ├─ Usuario entra a login/registro
+   ├─ Frontend: main.ts → form handler → api.login()/api.register()
+   ├─ Backend: POST /auth/register o /auth/login
+   │  └─ auth.service.ts: Hash password, genera JWT con {sub, email, role, name, birthDate}
+   ├─ Frontend: Guarda session en localStorage
+   └─ Estado: state.session = { user, token }
+
+2️⃣ CARGA INICIAL (Bootstrap)
+   ├─ Frontend: bootstrap() → refrescar datos públicos + privados
+   ├─ Llamadas en paralelo:
+   │  ├─ api.getProducts({}) → GET /products (sin autenticación)
+   │  ├─ api.getCategories() → GET /products/categories (sin autenticación)
+   │  └─ Si usuario logueado:
+   │     ├─ api.getMyProducts(token) → GET /products/me
+   │     ├─ api.getMyPurchases(token) → GET /purchases/me
+   │     └─ api.getUsers(token) → GET /users (solo si admin)
+   ├─ Backend: ProductsService.findAll() con QueryBuilder
+   │  └─ ILIKE :search% si hay filtro de búsqueda
+   │  └─ JOIN categorias si hay filtro por categoría
+   └─ Frontend: Renderiza state.products, state.categories
+
+3️⃣ CATÁLOGO (Catalog View)
+   ├─ Usuario llena búsqueda + filtra por categoría
+   ├─ Frontend: form "catalog-search"
+   │  ├─ Actualiza state.catalogSearch y state.selectedCategoryId
+   │  └─ Llama refreshPublicData() con parámetros
+   ├─ API call: api.getProducts({ search: "...", categoryId: 123 })
+   │  └─ URL: GET /products?search=prefix%&categoryId=123
+   ├─ Backend: ProductsService.buildListQuery()
+   │  ├─ WHERE product.name ILIKE 'prefix%' (prefix search, no %prefix%)
+   │  ├─ JOIN product_categorias ON category.id = 123
+   │  └─ DISTINCT para evitar duplicados
+   └─ Frontend: Renderiza catálogo filtrando imagenes si +18 y user es menor
+
+4️⃣ COMPRA DE PRODUCTO (Purchase Flow)
+   ├─ Usuario hace clic en "Comprar" en producto +18
+   ├─ Frontend: Valida si user >= 18 con canSeeAdultContent()
+   │  └─ Si no puede, muestra error y bloquea
+   ├─ API call: api.createPurchase({ productId }, token)
+   │  └─ POST /purchases con Authorization: Bearer {token}
+   ├─ Backend: PurchasesService.create()
+   │  ├─ Obtiene user de DB con buyer.birthDate
+   │  ├─ Valida isAdult(buyer.birthDate)
+   │  ├─ Valida que producto no tiene categorías +18 O user es adult
+   │  └─ Crea Purchase + PurchaseDetails
+   └─ Frontend: Muestra éxito, recarga datos privados
+
+5️⃣ CREAR/EDITAR PRODUCTO (Product Form en Profile)
+   ├─ Usuario llena form en profile-view.ts
+   ├─ Frontend: renderCategoryChecks() desactiva categorías +18 si user es menor
+   │  └─ <input disabled> + tooltip "(requiere mayoría de edad)"
+   ├─ Form submit: "product" → readCategoryIds() + api.createProduct()
+   │  └─ POST /products con { name, price, quantity, categoryIds: [1,3] }
+   ├─ Backend: ProductsService.create()
+   │  ├─ Resuelve todas las categorías (ERROR si no existen)
+   │  ├─ Valida assertUserCanUseCategories()
+   │  │  └─ Si user es menor Y tiene +18 category → ForbiddenException
+   │  └─ Crea Product con relación Many-to-Many a categories
+   └─ Frontend: Recarga myProducts, limpia formulario
+
+6️⃣ PANEL ADMIN (Admin View)
+   ├─ Si user.role === '1' → acceso a panel
+   ├─ Tres tablas editables:
+   │  ├─ Categorías (NUEVA):
+   │  │  ├─ Edita nombre y swMayoriaEdad (0=General, 1=+18)
+   │  │  └─ PUT /products/categories/{id}
+   │  ├─ Usuarios:
+   │  │  ├─ Edita nombre y rol
+   │  │  └─ PUT /users/{id}
+   │  └─ Productos:
+   │     ├─ Edita nombre, precio, cantidad
+   │     └─ PUT /products/{id}
+   ├─ Backend: products.service.updateCategory()
+   │  ├─ Verifica que user.role === '1' (admin)
+   │  ├─ Actualiza category.name y/o swMayoriaEdad
+   │  └─ Retorna categoría actualizada
+   └─ Frontend: Actualiza state.categories en vivo
+
+7️⃣ ELIMINAR PRODUCTO
+   ├─ Usuario hace clic "Eliminar" en Mi perfil o Admin
+   ├─ Frontend: Muestra confirm() "¿Estás seguro?"
+   ├─ Si confirma:
+   │  ├─ API call: api.deleteProduct(id, token)
+   │  │  └─ DELETE /products/{id}
+   │  ├─ Backend: ProductsService.remove()
+   │  │  └─ Verifica que sea owner o admin
+   │  └─ Frontend: Recarga productos
+   └─ Si cancela: no hace nada

@@ -1,6 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Product } from '../entities/product.entity';
 
+class ProductCategoryResponseDto {
+  @ApiProperty()
+  id!: number;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiProperty({ enum: ['0', '1'] })
+  swMayoriaEdad!: '0' | '1';
+}
+
 export class ProductResponseDto {
   @ApiProperty()
   id!: number;
@@ -26,6 +37,12 @@ export class ProductResponseDto {
   @ApiPropertyOptional()
   image!: string | null;
 
+  @ApiProperty({ type: [ProductCategoryResponseDto] })
+  categories!: ProductCategoryResponseDto[];
+
+  @ApiProperty()
+  isAdultOnly!: boolean;
+
   static fromEntity(product: Product): ProductResponseDto {
     return {
       id: product.id,
@@ -36,6 +53,14 @@ export class ProductResponseDto {
       price: product.price,
       quantity: product.quantity,
       image: product.image,
+      categories: (product.categories ?? []).map((category) => ({
+        id: category.id,
+        name: category.name,
+        swMayoriaEdad: category.swMayoriaEdad,
+      })),
+      isAdultOnly: (product.categories ?? []).some(
+        (category) => category.swMayoriaEdad === '1',
+      ),
     };
   }
 }
